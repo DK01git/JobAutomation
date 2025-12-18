@@ -1,0 +1,5 @@
+{
+  "name": "AutoApply Control Center",
+  "description": "A centralized dashboard for an autonomous job application system. Orchestrates discovery, extraction, and matching agents using Gemini AI.",
+  "requestFramePermissions": []
+}
