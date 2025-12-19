@@ -1,28 +1,31 @@
-# AutoApply AI Control Center
+# 🤖 AutoApply AI Control Center
 
-An autonomous job application system that orchestrates discovery, extraction, and matching agents using Gemini AI.
+A high-performance, autonomous job application system that orchestrates AI agents to discover, extract, and match job opportunities in real-time.
+
+## 🌟 Overview
+
+This application leverages the **Gemini 2.5 & 3 series** models to automate the tedious parts of the job hunt. It doesn't just "find" jobs; it reasons through them to find the perfect fit for your specific career profile.
 
 ## 🚀 Key Features
 
 - **Autonomous Discovery**: Background agent scans multiple sources (LinkedIn, Indeed, etc.) for relevant roles.
-- **Daily Digest Review**: Receive a curated briefing of new matches requiring your approval before processing.
-- **Neural Matching**: Deep reasoning engine compares your profile against job requirements.
-- **Automated Submission**: Generates personalized cover letters and email bodies for verified applications.
-- **Persistent Scheduler**: Runs daily heartbeats to ensure you never miss a new listing.
+- **Approval Workflow**: A "Daily Discovery Digest" allows you to review and approve matches before the AI proceeds.
+- **Neural Matching Engine**: Deep analysis of your profile vs. job descriptions with logic-based fit scores.
+- **Smart Material Generation**: Automatically creates customized cover letters and email drafts.
+- **Simulated SMTP Outbox**: Tracks every sent application with a full audit trail.
 
 ## 🛠 Tech Stack
 
-- **React 19**
-- **TypeScript**
-- **Gemini AI SDK** (`@google/genai`)
-- **Tailwind CSS**
-- **Vite**
-- **Recharts** (Visual Analytics)
-- **Lucide React** (Iconography)
+- **React 19** + **TypeScript**
+- **Vite** (Build Tool)
+- **Google GenAI SDK** (Gemini AI)
+- **Tailwind CSS** (Styling)
+- **Recharts** (Data Visualization)
+- **Lucide React** (Icons)
 
-## 📦 Installation & Setup
+## 📦 Local Installation
 
-1. **Clone the repo**
+1. **Clone the repository**
    ```bash
    git clone https://github.com/YOUR_USERNAME/autoapply-ai.git
    cd autoapply-ai
@@ -34,24 +37,23 @@ An autonomous job application system that orchestrates discovery, extraction, an
    ```
 
 3. **Configure Environment**
-   Create a `.env` file in the root directory:
+   Rename `.env.example` to `.env` and add your API key:
    ```env
    VITE_GEMINI_API_KEY=your_google_ai_studio_api_key
    ```
 
-4. **Run Development Server**
+4. **Start Development Server**
    ```bash
    npm run dev
    ```
 
-## 🤖 Agent Workflow
+## 🏗 Project Structure
 
-1. **SCHEDULER**: Every 24 hours, initiates the sync sequence.
-2. **DISCOVERY**: Scours job boards for roles matching your profile.
-3. **ORCHESTRATOR**: Notifies you via the "Daily Discovery Digest" for approval.
-4. **EXTRACTION**: Parses technical requirements and salary metadata.
-5. **MATCHING**: Provides a fit score and reasoning.
-6. **SUBMISSION**: Generates and archives application packets.
+- `/components`: UI modules (Dashboard, JobFeed, Profile, etc.)
+- `/services`: Core logic for AI interaction, currency conversion, and simulated email.
+- `App.tsx`: The main orchestrator and state manager.
+- `types.ts`: Centralized TypeScript definitions.
 
 ## 📄 License
-MIT
+
+MIT - Feel free to use and modify for your own job hunt automation.

@@ -2,9 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Job, ViewState, UserProfile } from '../types';
-// Added Globe to the imports
-import { Briefcase, CheckCircle, Search, Cpu, Mail, Clock, Send, Check, ExternalLink, Activity, ArrowRight, Zap, ListChecks, ThumbsUp, XCircle, Globe } from 'lucide-react';
-import { generateDailyDigest } from '../services/geminiService';
+import { Briefcase, CheckCircle, Search, Cpu, Mail, Clock, Send, Check, ExternalLink, Activity, ArrowRight, Zap, ListChecks, ThumbsUp, XCircle, Globe, ShieldAlert, Terminal, Loader2, X, FileText, Paperclip, ShieldCheck, SendHorizonal } from 'lucide-react';
+import { generateDailyDigest, generateApplicationMaterials } from '../services/geminiService';
 import { sendEmail } from '../services/emailService';
 
 interface DashboardProps {
@@ -18,11 +17,11 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ jobs, addLog, setView, setSelectedJobId, lastDigestTime, profile }) => {
   const [emailStatus, setEmailStatus] = useState<'idle' | 'generating' | 'sending' | 'sent'>('idle');
+  const [testStatus, setTestStatus] = useState<'idle' | 'running' | 'complete'>('idle');
   const [timeLeft, setTimeLeft] = useState<string>('');
+  const [testResult, setTestResult] = useState<{ subject: string; body: string; to: string; mailtoUrl?: string; mode: 'relay' | 'mailto' } | null>(null);
   
-  // Jobs discovered in the last 24 hours that are still in 'discovered' status
   const pendingJobs = jobs.filter(j => j.status === 'discovered');
-  const [processingId, setProcessingId] = useState<string | null>(null);
 
   useEffect(() => {
     const updateCountdown = () => {
@@ -70,9 +69,14 @@ const Dashboard: React.FC<DashboardProps> = ({ jobs, addLog, setView, setSelecte
     try {
         const emailBody = await generateDailyDigest(jobs.slice(0, 5), profile.personal_info.name);
         setEmailStatus('sending');
-        await sendEmail({ to: profile.personal_info.email, subject: "Manual Sync Briefing", body: emailBody });
+        await sendEmail({ 
+          to: profile.personal_info.email, 
+          subject: "Manual Sync Briefing", 
+          body: emailBody,
+          gasUrl: profile.preferences.gas_url
+        });
         setEmailStatus('sent');
-        addLog('Manual sync complete. Discovery results dispatched to your email.', 'ORCHESTRATOR', 'success');
+        addLog('Manual sync complete. Check your inbox.', 'ORCHESTRATOR', 'success');
         setTimeout(() => setEmailStatus('idle'), 3000);
     } catch (e) {
         setEmailStatus('idle');
@@ -80,8 +84,153 @@ const Dashboard: React.FC<DashboardProps> = ({ jobs, addLog, setView, setSelecte
     }
   };
 
+  const runIntegrityTest = async () => {
+    if (testStatus !== 'idle') return;
+    setTestStatus('running');
+    addLog('System Test Initiated: Testing end-to-end SMTP Relay...', 'SUBMISSION');
+    
+    try {
+      const testJob: Job = {
+        id: 'test-123',
+        title: 'Senior AI Engineer (System Test)',
+        company: 'AutoApply Core Labs',
+        location: 'Remote',
+        description: 'Test position for verifying application packet formatting.',
+        status: 'discovered',
+        source: 'Internal System',
+        postedDate: new Date().toLocaleDateString(),
+        url: '#'
+      };
+
+      addLog('Step 1/3: Composing high-fidelity email body...', 'SUBMISSION');
+      const materials = await generateApplicationMaterials(testJob, profile);
+      
+      addLog(`Step 2/3: Attempting ${profile.preferences.gas_url ? 'AUTONOMOUS' : 'SIMULATED'} dispatch to ${profile.personal_info.email}...`, 'SUBMISSION');
+      const subject = `Application for ${testJob.title} - ${profile.personal_info.name}`;
+      
+      const response = await sendEmail({
+        to: profile.personal_info.email,
+        subject: subject,
+        body: materials.emailBody,
+        gasUrl: profile.preferences.gas_url,
+        attachments: [profile.personal_info.cv_name || "DPerera_CV.pdf", "Cover_Letter_Test.pdf"]
+      });
+
+      setTestResult({
+        subject: subject,
+        body: materials.emailBody,
+        to: profile.personal_info.email,
+        mailtoUrl: response.mailtoUrl,
+        mode: response.mode
+      });
+
+      addLog(`Step 3/3: Integrity Check SUCCESS (${response.mode.toUpperCase()}).`, 'SUBMISSION', 'success');
+      setTestStatus('complete');
+      setTimeout(() => setTestStatus('idle'), 5000);
+    } catch (e) {
+      addLog('Integrity test failed.', 'SUBMISSION', 'error');
+      setTestStatus('idle');
+    }
+  };
+
+  const TestResultModal = () => {
+    if (!testResult) return null;
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl">
+        <div className="bg-slate-900 border border-slate-700 w-full max-w-4xl max-h-[90vh] rounded-[2.5rem] overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95 duration-300">
+          <div className="p-8 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+            <div className="flex items-center space-x-4">
+              <div className={`w-12 h-12 rounded-xl flex items-center justify-center border ${testResult.mode === 'relay' ? 'bg-emerald-600/20 text-emerald-500 border-emerald-500/20' : 'bg-blue-600/20 text-blue-500 border-blue-500/20'}`}>
+                <ShieldCheck size={28} />
+              </div>
+              <div>
+                <h2 className="text-xl font-black text-white uppercase tracking-tight">Dispatch Integrity Report</h2>
+                <p className={`text-[10px] font-bold uppercase tracking-widest mt-1 ${testResult.mode === 'relay' ? 'text-emerald-500' : 'text-blue-500'}`}>
+                  {testResult.mode === 'relay' ? 'AUTONOMOUS RELAY SUCCESSFUL' : 'SIMULATED HANDSHAKE VERIFIED'}
+                </p>
+              </div>
+            </div>
+            <button onClick={() => setTestResult(null)} className="w-10 h-10 rounded-full hover:bg-white/10 flex items-center justify-center text-slate-400">
+              <X size={24} />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-10 space-y-8 custom-scrollbar">
+            {testResult.mode === 'mailto' && (
+              <div className="bg-blue-600/10 border border-blue-500/20 p-6 rounded-3xl flex items-center justify-between">
+                <div className="space-y-1">
+                  <h4 className="text-white font-bold text-sm uppercase tracking-tight">Manual Client Handoff Required</h4>
+                  <p className="text-[10px] text-slate-400">No GAS relay detected. Use your local mail client to send for real.</p>
+                </div>
+                <a 
+                  href={testResult.mailtoUrl} 
+                  className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-900/40 flex items-center gap-2"
+                >
+                  <SendHorizonal size={16} /> Open in Local Mail App
+                </a>
+              </div>
+            )}
+
+            {testResult.mode === 'relay' && (
+              <div className="bg-emerald-600/10 border border-emerald-500/20 p-6 rounded-3xl flex items-center gap-4">
+                <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-500 shrink-0">
+                  <Check size={20} />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-white font-bold text-sm uppercase tracking-tight">Fully Autonomous Dispatch Successful</h4>
+                  <p className="text-[10px] text-slate-400">Packet was pushed directly to your Google Apps Script relay. Check your Gmail 'Sent' folder.</p>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-4 bg-slate-950/50 p-6 rounded-2xl border border-slate-800">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                <div>
+                  <label className="text-[9px] font-black text-slate-600 uppercase block mb-1">Target Address</label>
+                  <span className="text-slate-300 font-mono">{testResult.to}</span>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-slate-600 uppercase block mb-1">Relay Source</label>
+                  <span className="text-slate-300 font-mono">{testResult.mode === 'relay' ? 'GAS_ORCHESTRATOR' : 'browser.local_host'}</span>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-slate-600 uppercase block mb-1">Protocol</label>
+                  <span className="text-blue-400 font-bold uppercase">{testResult.mode === 'relay' ? 'HTTPS_POST' : 'MAILTO:HANDOFF'}</span>
+                </div>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-slate-600 uppercase block mb-1">Compiled Subject Line</label>
+                <span className="text-white font-bold text-base">{testResult.subject}</span>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2 text-blue-400">
+                  <Mail size={16} />
+                  <span className="text-[10px] font-black uppercase tracking-widest">AI Content Preview</span>
+                </div>
+                <button onClick={() => navigator.clipboard.writeText(testResult.body)} className="text-[10px] text-slate-500 hover:text-white font-bold">Copy Body</button>
+              </div>
+              <div className="bg-white/5 p-8 rounded-3xl border border-slate-800 font-mono text-sm leading-relaxed text-slate-300 whitespace-pre-line shadow-inner">
+                {testResult.body}
+              </div>
+            </div>
+          </div>
+
+          <div className="p-8 border-t border-slate-800 bg-slate-900/80 flex justify-end">
+             <button onClick={() => setTestResult(null)} className="px-10 py-3 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-xl text-xs font-black uppercase tracking-widest transition-all">
+                Dismiss Report
+             </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6 overflow-y-auto max-h-full pb-20 custom-scrollbar pr-2">
+      <TestResultModal />
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-white tracking-tight uppercase flex items-center gap-3">
           <Zap className="text-yellow-500 fill-yellow-500/20" />
@@ -95,9 +244,37 @@ const Dashboard: React.FC<DashboardProps> = ({ jobs, addLog, setView, setSelecte
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Daily Digest & Review Column */}
         <div className="lg:col-span-3 space-y-6">
-          {/* Main Digest Review Card */}
+          <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group">
+             <div className="absolute -right-10 -top-10 opacity-5 group-hover:opacity-10 transition-opacity">
+                <ShieldAlert size={200} />
+             </div>
+             <div className="flex items-center justify-between relative z-10">
+                <div className="flex items-center space-x-5">
+                   <div className="w-14 h-14 bg-emerald-600/10 text-emerald-500 rounded-2xl flex items-center justify-center border border-emerald-500/20 shadow-lg shadow-emerald-500/10">
+                      <Terminal size={28} />
+                   </div>
+                   <div>
+                      <h3 className="text-lg font-black text-white uppercase tracking-tight">System Health & Test Run</h3>
+                      <p className="text-xs text-slate-500 mt-1 max-w-md">Verify the full AI-to-SMTP pipeline. {profile.preferences.gas_url ? 'Autonomous relay is ACTIVE.' : 'Simulated mode enabled.'}</p>
+                   </div>
+                </div>
+                <button 
+                  onClick={runIntegrityTest}
+                  disabled={testStatus !== 'idle'}
+                  className={`px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl flex items-center gap-3 ${
+                    testStatus === 'complete' ? 'bg-emerald-600 text-white' : 
+                    testStatus === 'running' ? 'bg-slate-800 text-slate-500' : 
+                    'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/30'
+                  }`}
+                >
+                  {testStatus === 'idle' && <><Activity size={16} /> Run System Integrity Test</>}
+                  {testStatus === 'running' && <><Loader2 className="animate-spin" size={16} /> Executing Protocol...</>}
+                  {testStatus === 'complete' && <><Check size={16} /> Packet Delivered</>}
+                </button>
+             </div>
+          </div>
+
           <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] overflow-hidden shadow-2xl relative">
             <div className="p-8 bg-blue-600/5 border-b border-slate-800 flex justify-between items-center">
               <div>
@@ -131,7 +308,12 @@ const Dashboard: React.FC<DashboardProps> = ({ jobs, addLog, setView, setSelecte
                           <Search size={20} />
                         </div>
                         <div className="min-w-0">
-                          <h4 className="text-base font-black text-white truncate">{job.title}</h4>
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-base font-black text-white truncate">{job.title}</h4>
+                            <a href={job.url} target="_blank" rel="noopener noreferrer" className="p-1 text-slate-500 hover:text-blue-400 transition-colors" title="Verify Original Post">
+                              <ExternalLink size={14} />
+                            </a>
+                          </div>
                           <div className="flex items-center gap-3 mt-1">
                             <span className="text-xs text-slate-500 font-bold">{job.company}</span>
                             <span className="w-1 h-1 rounded-full bg-slate-700" />
@@ -200,9 +382,7 @@ const Dashboard: React.FC<DashboardProps> = ({ jobs, addLog, setView, setSelecte
           </div>
         </div>
 
-        {/* Sidebar Controls */}
         <div className="space-y-6">
-          {/* Scheduler Info */}
           <div className="bg-slate-900 p-8 rounded-[2rem] border border-slate-800 flex flex-col items-center text-center shadow-2xl relative overflow-hidden group">
             <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
               <Clock size={80} />
@@ -227,14 +407,13 @@ const Dashboard: React.FC<DashboardProps> = ({ jobs, addLog, setView, setSelecte
             </button>
           </div>
 
-          {/* Quick Metrics */}
           <div className="bg-slate-950 p-6 rounded-3xl border border-slate-800">
             <h3 className="text-[10px] font-black text-slate-600 uppercase tracking-widest mb-6">Agent Control Status</h3>
             <div className="space-y-4">
               {[
                 { name: 'Crawler Node', status: 'MONITORING', color: 'bg-emerald-500' },
                 { name: 'Analysis Engine', status: 'WAITING_APPROVAL', color: 'bg-amber-500' },
-                { name: 'SMTP Simulated Relay', status: 'STANDBY', color: 'bg-blue-500' },
+                { name: 'SMTP Simulated Relay', status: profile.preferences.gas_url ? 'ACTIVE_RELAY' : 'STANDBY', color: profile.preferences.gas_url ? 'bg-emerald-500' : 'bg-blue-500' },
                 { name: 'Heartbeat Monitor', status: 'ACTIVE', color: 'bg-emerald-500' }
               ].map((node, i) => (
                 <div key={i} className="flex items-center justify-between p-4 bg-slate-900/50 rounded-2xl border border-slate-800/50">

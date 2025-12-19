@@ -1,3 +1,4 @@
+
 export interface UserProfile {
   personal_info: {
     name: string;
@@ -5,7 +6,7 @@ export interface UserProfile {
     location: string;
     phone?: string;
     portfolio?: string;
-    cv_name?: string; // Target CV filename for attachments
+    cv_name?: string;
   };
   desired_roles: string[];
   skills: {
@@ -17,6 +18,12 @@ export interface UserProfile {
     salary_min: number;
     currency: string;
     work_mode: 'remote' | 'hybrid' | 'onsite' | 'any';
+    ai_provider: 'gemini' | 'openrouter' | 'huggingface';
+    api_tokens: {
+      hf_token?: string;
+      openrouter_token?: string;
+    };
+    gas_url?: string; // Google Apps Script Web App URL
   };
 }
 
@@ -31,6 +38,13 @@ export interface Job {
   status: 'discovered' | 'extracted' | 'matched' | 'applied' | 'rejected';
   matchScore?: number;
   matchReasoning?: string;
+  missingSkills?: string[]; 
+  matchBreakdown?: {
+    technical: number; 
+    culture: number;   
+    growth: number;    
+    logistics: number; 
+  };
   extractedRequirements?: {
     must_have: string[];
     nice_to_have: string[];
@@ -47,7 +61,7 @@ export interface Job {
     sentAt: string;
     trackingId: string;
     status: 'delivered' | 'read' | 'pending';
-    attachments: string[]; // List of files sent
+    attachments: string[];
   };
 }
 

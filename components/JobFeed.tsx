@@ -1,7 +1,9 @@
+
 import React, { useState, useEffect } from 'react';
 import { Job, UserProfile } from '../types';
 import { analyzeJobRequirements, matchJobToProfile, discoverJobs, generateApplicationMaterials } from '../services/geminiService';
-import { Sparkles, ExternalLink, MapPin, Building, Loader2, Target, Search, Send, CheckCircle, Globe, Mail, FileText, X, Activity, ShieldCheck, Edit3, RotateCcw, Paperclip, ThumbsUp, Copy, Check, XCircle } from 'lucide-react';
+import { Sparkles, ExternalLink, MapPin, Building, Loader2, Target, Search, Send, CheckCircle, Globe, Mail, FileText, X, Activity, ShieldCheck, Edit3, RotateCcw, Paperclip, ThumbsUp, Copy, Check, XCircle, TrendingUp, Heart, Settings, Briefcase, AlertTriangle, Layers, SendHorizonal, UserCheck, Link, CloudCheck, Info } from 'lucide-react';
+import { sendEmail } from '../services/emailService';
 
 interface JobFeedProps {
   jobs: Job[];
@@ -19,6 +21,7 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
   const [activeSourceIndex, setActiveSourceIndex] = useState(0);
   const [showTrackingModal, setShowTrackingModal] = useState(false);
   const [copiedType, setCopiedType] = useState<'email' | 'letter' | null>(null);
+  const [testSent, setTestSent] = useState(false);
   
   const [isDrafting, setIsDrafting] = useState(false);
   const [draftMaterials, setDraftMaterials] = useState<{ emailBody: string; coverLetter: string } | null>(null);
@@ -38,13 +41,14 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
   useEffect(() => {
     setIsDrafting(false);
     setDraftMaterials(null);
+    setTestSent(false);
   }, [selectedJobId]);
 
   const runExtraction = async (job: Job) => {
     setLoadingAction(`extract-${job.id}`);
     addLog(`Deep Extraction: Parsing metadata for ${job.title}...`, 'EXTRACTION');
     try {
-      const requirements = await analyzeJobRequirements(job.description);
+      const requirements = await analyzeJobRequirements(job.description, profile);
       const updatedJobs = jobs.map(j => 
         j.id === job.id ? { ...j, extractedRequirements: requirements, status: 'extracted' as const } : j
       );
@@ -65,14 +69,21 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
 
   const runMatching = async (job: Job) => {
     setLoadingAction(`match-${job.id}`);
-    addLog(`Matching Engine: Comparing profile against ${job.company} requirements...`, 'MATCHING');
+    addLog(`Neural Profiler: Identifying skill gaps and weighting match...`, 'MATCHING');
     try {
       const matchResult = await matchJobToProfile(job, profile);
       const updatedJobs = jobs.map(j => 
-        j.id === job.id ? { ...j, matchScore: matchResult.score, matchReasoning: matchResult.reasoning, status: 'matched' as const } : j
+        j.id === job.id ? { 
+          ...j, 
+          matchScore: matchResult.score, 
+          matchReasoning: matchResult.reasoning, 
+          matchBreakdown: matchResult.breakdown,
+          missingSkills: matchResult.missing_skills || [],
+          status: 'matched' as const 
+        } : j
       );
       setJobs(updatedJobs);
-      addLog(`Match analysis complete: ${matchResult.score}% fit.`, 'MATCHING', 'success');
+      addLog(`Match analysis complete. Skill gaps identified.`, 'MATCHING', 'success');
     } catch (e) {
       addLog(`Matching failed: ${e}`, 'MATCHING', 'error');
     } finally {
@@ -110,25 +121,67 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
     }
   };
 
+  const handleTestSubmit = async () => {
+    if (!selectedJob || !draftMaterials) return;
+    setLoadingAction(`test-${selectedJob.id}`);
+    addLog(`Self-Verification Wave: Dispatching test packet to your inbox...`, 'SUBMISSION');
+
+    try {
+      const response = await sendEmail({
+        to: profile.personal_info.email,
+        subject: `[TEST] Application for ${selectedJob.title} - ${selectedJob.company}`,
+        body: draftMaterials.emailBody,
+        gasUrl: profile.preferences.gas_url,
+        attachments: [profile.personal_info.cv_name || "DPerera_CV.pdf"],
+        coverLetterText: draftMaterials.coverLetter // Pass text for PDF generation
+      });
+
+      if (response.mode === 'mailto') {
+        window.location.href = response.mailtoUrl!;
+      }
+      
+      setTestSent(true);
+      addLog(`Test packet delivered to ${profile.personal_info.email}.`, 'SUBMISSION', 'success');
+    } catch (e) {
+      addLog(`Test dispatch failed.`, 'SUBMISSION', 'error');
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
   const handleFinalSubmit = async () => {
     if (!selectedJob || !draftMaterials) return;
     setLoadingAction(`submit-${selectedJob.id}`);
-    addLog(`Fetching Master CV: ${profile.personal_info.cv_name || 'DPerera_CV.pdf'}...`, 'SUBMISSION');
+    
+    addLog(`Attachment Protocol: Bundling ${profile.personal_info.cv_name || 'DPerera_CV.pdf'}...`, 'SUBMISSION');
     
     try {
-      await new Promise(r => setTimeout(r, 1200)); 
-      
       const attachments = [
-        profile.personal_info.cv_name || "DPerera_CV.pdf",
-        `Cover_Letter_${selectedJob.company.replace(/\s+/g, '_')}.pdf`
+        profile.personal_info.cv_name || "DPerera_CV.pdf"
       ];
+
+      const response = await sendEmail({
+        to: `recruitment@${selectedJob.company.toLowerCase().replace(/\s+/g, '')}.com`,
+        subject: `Application for ${selectedJob.title} - ${profile.personal_info.name}`,
+        body: draftMaterials.emailBody,
+        gasUrl: profile.preferences.gas_url,
+        attachments,
+        coverLetterText: draftMaterials.coverLetter // Pass text for PDF generation
+      });
+
+      if (response.mode === 'mailto') {
+        window.location.href = response.mailtoUrl!;
+        addLog(`Handoff to local mail client initiated. Manual send required.`, 'SUBMISSION', 'info');
+      } else {
+        addLog(`Autonomous relay triggered successfully via GAS.`, 'SUBMISSION', 'success');
+      }
 
       const applicationDetails = {
         ...draftMaterials,
         sentAt: new Date().toLocaleString(),
         trackingId: `TRK-${Math.random().toString(36).substring(2, 9).toUpperCase()}`,
         status: 'delivered' as const,
-        attachments
+        attachments: [...attachments, "AI_Generated_Cover_Letter.pdf"]
       };
       
       const updatedJobs = jobs.map(j => 
@@ -136,7 +189,6 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
       );
       setJobs(updatedJobs);
       setIsDrafting(false);
-      addLog(`Packet delivered via Simulated SMTP Relay. Check 'Sent Outbox' for archive.`, 'SUBMISSION', 'success');
     } catch (e) {
       addLog(`Final submission failed.`, 'SUBMISSION', 'error');
     } finally {
@@ -169,12 +221,74 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
     setTimeout(() => setCopiedType(null), 2000);
   };
 
+  const MatchDNA = ({ breakdown }: { breakdown: Job['matchBreakdown'] }) => {
+    if (!breakdown) return null;
+    const items = [
+      { label: 'Technical Fit', value: breakdown.technical, color: 'bg-blue-500', icon: <Settings size={12} />, weight: '40%' },
+      { label: 'Culture Match', value: breakdown.culture, color: 'bg-emerald-500', icon: <Heart size={12} />, weight: '20%' },
+      { label: 'Growth Potential', value: breakdown.growth, color: 'bg-purple-500', icon: <TrendingUp size={12} />, weight: '20%' },
+      { label: 'Logistics/Sal', value: breakdown.logistics, color: 'bg-amber-500', icon: <Briefcase size={12} />, weight: '20%' },
+    ];
+
+    return (
+      <div className="space-y-4 p-6 bg-slate-950/50 border border-slate-800 rounded-3xl">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Match DNA Breakdown</span>
+          <Sparkles size={14} className="text-blue-500" />
+        </div>
+        <div className="space-y-3">
+          {items.map((item, i) => (
+            <div key={i} className="space-y-1.5">
+              <div className="flex justify-between text-[10px] font-bold">
+                <div className="flex items-center gap-2 text-slate-300">
+                  {item.icon}
+                  <span>{item.label}</span>
+                  <span className="text-slate-600 font-mono">({item.weight})</span>
+                </div>
+                <span className="text-slate-200">{item.value}%</span>
+              </div>
+              <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full ${item.color} rounded-full transition-all duration-1000 ease-out`}
+                  style={{ width: `${item.value}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const MissingStack = ({ skills }: { skills?: string[] }) => {
+    if (!skills || skills.length === 0) return null;
+    return (
+      <div className="space-y-4 p-6 bg-red-950/10 border border-red-900/30 rounded-3xl">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2 text-red-500">
+            <AlertTriangle size={14} />
+            <span className="text-[10px] font-black uppercase tracking-widest">Gap Analysis: Missing Stack</span>
+          </div>
+          <Layers size={14} className="text-red-500/50" />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {skills.map((skill, i) => (
+            <span key={i} className="px-2 py-1 bg-red-500/5 text-red-400 border border-red-500/20 border-dashed rounded-lg text-[10px] font-bold uppercase tracking-tight">
+              {skill}
+            </span>
+          ))}
+        </div>
+        <p className="text-[9px] text-slate-500 italic mt-2">These technologies were identified in the job description but were not detected in your CV profile.</p>
+      </div>
+    );
+  };
+
   const TrackingModal = () => {
     if (!selectedJob?.applicationDetails) return null;
     const { applicationDetails } = selectedJob;
     return (
       <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl">
-        <div className="bg-slate-900 border border-slate-700 w-full max-w-5xl max-h-[95vh] rounded-[2.5rem] overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95 duration-200">
+        <div className="bg-slate-900 border border-slate-800 w-full max-w-5xl max-h-[95vh] rounded-[2.5rem] overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95 duration-200">
           <div className="p-8 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
             <div className="flex items-center space-x-5">
               <div className="w-14 h-14 bg-blue-600/20 text-blue-500 rounded-2xl flex items-center justify-center border border-blue-500/20 shadow-lg shadow-blue-500/10">
@@ -197,7 +311,6 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
           </div>
           
           <div className="flex-1 overflow-y-auto p-10 space-y-12 custom-scrollbar bg-slate-950/20">
-            {/* Attachments Section */}
             <div className="space-y-4">
                <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2 text-emerald-400">
@@ -221,7 +334,6 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
                 </div>
             </div>
 
-            {/* Content Sections - Unrestricted rendering */}
             <div className="space-y-10">
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -229,15 +341,12 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
                     <Mail size={18} />
                     <span className="text-xs font-black uppercase tracking-widest">Full Email Transcript</span>
                   </div>
-                  <button 
-                    onClick={() => handleCopy(applicationDetails.emailBody, 'email')}
-                    className="text-[10px] font-bold text-slate-500 hover:text-white flex items-center gap-1.5"
-                  >
+                  <button onClick={() => handleCopy(applicationDetails.emailBody, 'email')} className="text-[10px] font-bold text-slate-500 hover:text-white flex items-center gap-1.5">
                     {copiedType === 'email' ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
-                    {copiedType === 'email' ? 'Copied' : 'Copy Full Transcript'}
+                    {copiedType === 'email' ? 'Copied' : 'Copy Transcript'}
                   </button>
                 </div>
-                <div className="p-8 bg-slate-900 border border-slate-800 rounded-3xl text-[15px] text-slate-300 italic font-mono leading-relaxed whitespace-pre-line shadow-inner min-h-[150px]">
+                <div className="p-8 bg-slate-900 border border-slate-800 rounded-3xl text-[15px] text-slate-300 italic font-mono whitespace-pre-line shadow-inner min-h-[150px]">
                   {applicationDetails.emailBody}
                 </div>
               </div>
@@ -248,25 +357,22 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
                     <FileText size={18} />
                     <span className="text-xs font-black uppercase tracking-widest">Full Generated Cover Letter</span>
                   </div>
-                  <button 
-                    onClick={() => handleCopy(applicationDetails.coverLetter, 'letter')}
-                    className="text-[10px] font-bold text-slate-500 hover:text-white flex items-center gap-1.5"
-                  >
+                  <button onClick={() => handleCopy(applicationDetails.coverLetter, 'letter')} className="text-[10px] font-bold text-slate-500 hover:text-white flex items-center gap-1.5">
                     {copiedType === 'letter' ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
-                    {copiedType === 'letter' ? 'Copied' : 'Copy Full Letter'}
+                    {copiedType === 'letter' ? 'Copied' : 'Copy Letter'}
                   </button>
                 </div>
-                <div className="p-10 bg-slate-900 border border-slate-800 rounded-3xl text-[15px] text-slate-300 whitespace-pre-line leading-loose shadow-inner min-h-[300px]">
+                <div className="p-10 bg-slate-900 border border-slate-800 rounded-3xl text-[15px] text-slate-300 whitespace-pre-line shadow-inner min-h-[300px]">
                   {applicationDetails.coverLetter}
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="p-8 border-t border-slate-800 flex justify-between items-center bg-slate-900/80 backdrop-blur-md">
+          <div className="p-8 border-t border-slate-800 flex justify-between items-center bg-slate-900/80">
             <div className="flex items-center gap-3">
               <div className="w-2 h-2 rounded-full bg-emerald-500" />
-              <div className="text-slate-500 text-[10px] uppercase font-bold tracking-widest">ARCHIVED ON {applicationDetails.sentAt} • ALL DATA RETRIEVED</div>
+              <div className="text-slate-500 text-[10px] uppercase font-bold tracking-widest">ARCHIVED ON {applicationDetails.sentAt}</div>
             </div>
             <button onClick={() => setShowTrackingModal(false)} className="px-12 py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl text-sm font-black transition-all border border-slate-700 shadow-xl">
               Dismiss Archive
@@ -296,22 +402,63 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
         
         <div className="flex-1 overflow-y-auto space-y-3 pr-2 pb-24 custom-scrollbar">
             {jobs.map(job => (
-                <div key={job.id} onClick={() => setSelectedJobId(job.id)} className={`p-5 rounded-2xl border transition-all cursor-pointer group ${selectedJobId === job.id ? 'bg-blue-600/10 border-blue-500/50 ring-1 ring-blue-500/20' : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'}`}>
-                    <div className="flex justify-between items-start">
-                        <div className="flex-1 min-w-0 pr-4">
-                            <h3 className="font-bold text-slate-100 text-base group-hover:text-blue-400 transition-colors truncate">{job.title}</h3>
-                            <div className="flex items-center space-x-3 text-xs text-slate-500 mt-2">
-                                <span className="flex items-center"><Building size={12} className="mr-1"/> {job.company}</span>
-                                <span className="flex items-center"><MapPin size={12} className="mr-1"/> {job.location}</span>
-                            </div>
+                <div key={job.id} onClick={() => setSelectedJobId(job.id)} 
+                  className={`p-6 rounded-2xl border transition-all cursor-pointer group relative overflow-hidden flex items-center justify-between ${
+                    selectedJobId === job.id 
+                    ? 'bg-blue-600/10 border-blue-500/50 shadow-[0_0_20px_rgba(59,130,246,0.15)]' 
+                    : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'
+                  }`}>
+                    <div className={`absolute left-0 top-0 bottom-0 w-1 ${
+                      job.status === 'applied' ? 'bg-emerald-500' :
+                      job.status === 'matched' ? 'bg-purple-500' :
+                      'bg-blue-500'
+                    }`} />
+
+                    <div className="flex-1 min-w-0 pr-4">
+                        <div className="flex items-center gap-3">
+                          <h3 className="font-black text-slate-100 text-lg group-hover:text-blue-400 transition-colors truncate">
+                            {job.title || "Untitled Position"}
+                          </h3>
+                          <a 
+                            href={job.url} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1.5 bg-slate-800 hover:bg-blue-600 text-slate-500 hover:text-white rounded-lg transition-all"
+                            title="Verify Original Job Post"
+                          >
+                            <ExternalLink size={14} />
+                          </a>
                         </div>
-                        <div className="text-right shrink-0">
-                            <span className={`text-[9px] px-2 py-0.5 rounded-full font-black tracking-widest border mb-2 inline-block ${
-                                job.status === 'applied' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
-                                job.status === 'discovered' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
-                                'bg-slate-800 text-slate-500 border-slate-700'
-                            }`}>{job.status.toUpperCase()}</span>
-                            {job.matchScore ? <div className="text-lg font-black text-white">{job.matchScore}%</div> : null}
+                        <div className="flex items-center space-x-4 text-xs text-slate-500 mt-2">
+                            <span className="flex items-center font-bold text-slate-400">
+                              <Building size={14} className="mr-1.5 text-slate-600"/> 
+                              {job.company}
+                            </span>
+                            <span className="w-1 h-1 rounded-full bg-slate-800" />
+                            <span className="flex items-center">
+                              <MapPin size={14} className="mr-1.5 text-slate-600"/> 
+                              {job.location}
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <div className="flex items-center space-x-6 shrink-0">
+                        {job.matchScore ? (
+                          <div className="text-right">
+                             <div className="text-xl font-black text-white tracking-tighter">{job.matchScore}%</div>
+                             <div className="text-[9px] text-slate-600 font-black uppercase tracking-tighter">Match</div>
+                          </div>
+                        ) : null}
+                        
+                        <div className="flex flex-col items-end gap-1">
+                          <span className={`text-[9px] px-2.5 py-1 rounded-lg font-black tracking-widest border ${
+                              job.status === 'applied' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                              job.status === 'discovered' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                              'bg-slate-800 text-slate-500 border-slate-700'
+                          }`}>
+                            {job.status.toUpperCase()}
+                          </span>
                         </div>
                     </div>
                 </div>
@@ -326,12 +473,15 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
                   {!isDrafting ? (
                     <>
                       <div className="space-y-3">
+                          <div className="text-[10px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-2">
+                            <Briefcase size={12} /> Designated Role Profile
+                          </div>
                           <h2 className="text-3xl font-black text-white leading-tight tracking-tight">{selectedJob.title}</h2>
                           <p className="text-xl text-slate-400 font-bold">{selectedJob.company}</p>
                           <div className="flex items-center space-x-4 text-slate-500 text-sm">
                               <span className="flex items-center"><MapPin size={14} className="mr-1.5"/> {selectedJob.location}</span>
                               <a href={selectedJob.url} target="_blank" rel="noreferrer" className="flex items-center text-blue-400 font-bold hover:text-blue-300">
-                                Live Post <ExternalLink size={14} className="ml-1.5" />
+                                Verify Source Post <ExternalLink size={14} className="ml-1.5" />
                               </a>
                           </div>
                       </div>
@@ -345,7 +495,7 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
                             </div>
                             <span className="text-[10px] text-slate-500 font-mono">{selectedJob.applicationDetails.sentAt}</span>
                           </div>
-                          <button onClick={() => setShowTrackingModal(true)} className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-sm font-black transition-all flex items-center justify-center space-x-3 shadow-xl shadow-blue-900/40">
+                          <button onClick={() => setShowTrackingModal(true)} className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-sm font-black transition-all flex items-center justify-center space-x-3 shadow-xl">
                               <Activity size={20} />
                               <span>VIEW SUBMISSION TRACKING</span>
                           </button>
@@ -372,7 +522,7 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
                                         {loadingAction === `extract-${selectedJob.id}` ? <Loader2 className="animate-spin" size={16}/> : 'Rerun Extraction'}
                                     </button>
                                     <button onClick={() => runMatching(selectedJob)} disabled={!!loadingAction} className="py-4 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-2xl text-xs font-black uppercase tracking-widest transition-all">
-                                        {loadingAction === `match-${selectedJob.id}` ? <Loader2 className="animate-spin" size={16}/> : 'Match Profiler'}
+                                        {loadingAction === `match-${selectedJob.id}` ? <Loader2 className="animate-spin" size={16}/> : 'Weighted Match'}
                                     </button>
                                   </div>
                                   <button onClick={() => initiateDrafting(selectedJob)} disabled={!!loadingAction} className="w-full py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-sm font-black uppercase tracking-widest transition-all shadow-xl shadow-blue-900/30 flex items-center justify-center space-x-3 group">
@@ -385,13 +535,17 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
                           )}
                       </div>
 
-                      {selectedJob.matchReasoning && (
-                        <div className="bg-slate-950/50 rounded-3xl p-6 border border-slate-800 space-y-3">
-                            <div className="flex items-center space-x-3 text-purple-400">
-                                <Sparkles size={18} />
-                                <span className="font-black text-[10px] uppercase tracking-widest">Neural Match Analysis</span>
-                            </div>
-                            <p className="text-sm text-slate-300 italic border-l-2 border-blue-600 pl-4 whitespace-pre-line leading-relaxed">{selectedJob.matchReasoning}</p>
+                      {selectedJob.matchBreakdown && (
+                        <div className="space-y-6">
+                          <MatchDNA breakdown={selectedJob.matchBreakdown} />
+                          <MissingStack skills={selectedJob.missingSkills} />
+                          <div className="bg-slate-950/50 rounded-3xl p-6 border border-slate-800 space-y-3">
+                              <div className="flex items-center space-x-3 text-purple-400">
+                                  <Sparkles size={18} />
+                                  <span className="font-black text-[10px] uppercase tracking-widest">Neural Logic Reasoning</span>
+                              </div>
+                              <p className="text-sm text-slate-300 italic border-l-2 border-blue-600 pl-4 whitespace-pre-line leading-relaxed">{selectedJob.matchReasoning}</p>
+                          </div>
                         </div>
                       )}
 
@@ -413,22 +567,39 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
                       </div>
 
                       <div className="space-y-4">
-                        <div className="flex items-center space-x-2 text-emerald-400">
-                          <Paperclip size={14} />
-                          <span className="text-[10px] font-black uppercase tracking-widest">Enclosed Files</span>
+                        <div className="flex items-center justify-between text-emerald-400">
+                          <div className="flex items-center space-x-2">
+                             <Paperclip size={14} />
+                             <span className="text-[10px] font-black uppercase tracking-widest">Enclosed Files</span>
+                          </div>
+                          {profile.preferences.gas_url ? (
+                            <span className="text-[9px] font-black text-emerald-500 uppercase flex items-center gap-1.5 bg-emerald-500/10 px-2 py-1 rounded-md border border-emerald-500/20">
+                               <CloudCheck size={12} /> Drive-Sync Active
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-black text-amber-500 uppercase flex items-center gap-1.5 bg-amber-500/10 px-2 py-1 rounded-md border border-amber-500/20">
+                               <Info size={12} /> Manual Attach Req.
+                            </span>
+                          )}
                         </div>
                         <div className="space-y-2">
                            <div className="flex items-center space-x-3 p-3 bg-slate-950/50 border border-slate-800 rounded-xl text-[10px] font-bold text-slate-400">
                               <FileText size={14} className="text-blue-500" />
                               <span>{profile.personal_info.cv_name || "DPerera_CV.pdf"}</span>
-                              <span className="ml-auto text-slate-600 uppercase tracking-tighter">Attaching</span>
                            </div>
                            <div className="flex items-center space-x-3 p-3 bg-slate-950/50 border border-slate-800 rounded-xl text-[10px] font-bold text-slate-400">
                               <FileText size={14} className="text-purple-500" />
-                              <span>Custom_Cover_Letter.pdf</span>
-                              <span className="ml-auto text-slate-600 uppercase tracking-tighter">Drafted</span>
+                              <span>AI_Generated_Cover_Letter.pdf</span>
                            </div>
                         </div>
+                        {testSent && (
+                           <div className="p-3 bg-emerald-600/10 border border-emerald-500/20 rounded-xl flex items-center gap-3">
+                              <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-500">
+                                 <Check size={14} />
+                              </div>
+                              <span className="text-[10px] font-black text-emerald-500 uppercase tracking-tight">Test Copy Delivered to {profile.personal_info.email}</span>
+                           </div>
+                        )}
                       </div>
 
                       <div className="space-y-6">
@@ -454,10 +625,17 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
                           />
                         </div>
 
-                        <button onClick={handleFinalSubmit} disabled={!!loadingAction} className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-sm font-black uppercase tracking-widest transition-all shadow-xl shadow-emerald-900/30 flex items-center justify-center space-x-3">
-                            {loadingAction?.startsWith('submit-') ? <Loader2 className="animate-spin" size={20} /> : <ThumbsUp size={20} />}
-                            <span>Approve & Dispatch Full Packet</span>
-                        </button>
+                        <div className="space-y-3">
+                          <button onClick={handleFinalSubmit} disabled={!!loadingAction} className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-sm font-black uppercase tracking-widest transition-all shadow-xl shadow-emerald-900/30 flex items-center justify-center space-x-3">
+                              {loadingAction?.startsWith('submit-') ? <Loader2 className="animate-spin" size={20} /> : <SendHorizonal size={20} />}
+                              <span>{profile.preferences.gas_url ? 'Confirm Final Dispatch' : 'Handoff to Mail Client'}</span>
+                          </button>
+                          
+                          <button onClick={handleTestSubmit} disabled={!!loadingAction} className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border border-slate-700 flex items-center justify-center space-x-3">
+                              {loadingAction?.startsWith('test-') ? <Loader2 className="animate-spin" size={16} /> : <UserCheck size={16} />}
+                              <span>Send Test to My Inbox</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -468,7 +646,7 @@ const JobFeed: React.FC<JobFeedProps> = ({ jobs, profile, setJobs, addLog, selec
                       <Target size={32} />
                   </div>
                   <h3 className="text-white font-bold">No Job Selected</h3>
-                  <p className="text-xs text-slate-500 max-w-[200px]">Select a position from the deep search stream to begin the automation sequence.</p>
+                  <p className="text-xs text-slate-500 max-w-[200px]">Select a position from the deep search stream to begin analysis.</p>
               </div>
           )}
         </div>

@@ -1,3 +1,4 @@
+
 import { Job, UserProfile } from "./types";
 
 export const INITIAL_PROFILE: UserProfile = {
@@ -39,7 +40,13 @@ export const INITIAL_PROFILE: UserProfile = {
     locations: ["Remote", "Colombo", "Sri Lanka", "Hybrid"],
     salary_min: 150000,
     currency: "LKR",
-    work_mode: 'remote'
+    work_mode: 'remote',
+    ai_provider: 'gemini',
+    api_tokens: {
+      hf_token: "",
+      openrouter_token: ""
+    },
+    gas_url: "" // User will provide this from Google Apps Script
   }
 };
 

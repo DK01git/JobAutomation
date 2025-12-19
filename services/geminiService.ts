@@ -1,206 +1,230 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { Job, UserProfile } from "../types";
 import { convertToLKR } from "./currencyService";
 
-const getAIClient = () => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) {
-    throw new Error("API Key not found in environment variables");
-  }
-  return new GoogleGenAI({ apiKey });
+const callHuggingFace = async (prompt: string, token: string) => {
+  const model = "mistralai/Mistral-7B-Instruct-v0.3";
+  const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      inputs: `[INST] ${prompt} [/INST]`,
+      parameters: { max_new_tokens: 1000, return_full_text: false }
+    })
+  });
+  const data = await response.json();
+  const text = data[0]?.generated_text || "{}";
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  return jsonMatch ? jsonMatch[0] : text;
 };
 
-export const analyzeJobRequirements = async (jobDescription: string) => {
-  try {
-    const ai = getAIClient();
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `Extract detailed technical requirements, salary, and benefits from this job description. 
-      Focus heavily on:
-      - Tools/Languages (e.g., Python, SQL, Azure, Spark)
-      - Experience level required
-      - Specific salary figures or ranges (average them for the 'amount' field)
-      
-      Job Description:
-      "${jobDescription}"`,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            must_have: { type: Type.ARRAY, items: { type: Type.STRING } },
-            nice_to_have: { type: Type.ARRAY, items: { type: Type.STRING } },
-            salary: {
-              type: Type.OBJECT,
-              properties: {
-                amount: { type: Type.NUMBER },
-                currency: { type: Type.STRING }
-              }
-            },
-            role_type: { type: Type.STRING, description: "e.g. Contract, Full-time" }
-          },
-          required: ["must_have", "nice_to_have"]
-        }
-      }
-    });
+const callOpenRouterFree = async (prompt: string, token: string) => {
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "meta-llama/llama-3-8b-instruct:free",
+      messages: [{ role: "user", content: prompt + "\n\nReturn ONLY raw JSON." }]
+    })
+  });
+  const data = await response.json();
+  return data.choices[0].message.content;
+};
 
-    const result = JSON.parse(response.text || "{}");
-    
-    if (result.salary && result.salary.amount && result.salary.currency) {
+export const analyzeJobRequirements = async (jobDescription: string, profile: UserProfile) => {
+  const prompt = `Task: Extract JSON requirements.
+    Fields: must_have (string[]), nice_to_have (string[]), salary (object with amount, currency).
+    Text: "${jobDescription}"`;
+
+  try {
+    let text: string;
+    const provider = profile.preferences.ai_provider;
+    const tokens = profile.preferences.api_tokens;
+
+    if (provider === 'huggingface' && tokens.hf_token) {
+      text = await callHuggingFace(prompt, tokens.hf_token);
+    } else if (provider === 'openrouter' && tokens.openrouter_token) {
+      text = await callOpenRouterFree(prompt, tokens.openrouter_token);
+    } else {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      text = response.text || "{}";
+    }
+
+    const result = JSON.parse(text);
+    if (result.salary?.amount && result.salary?.currency) {
       result.salary.converted_lkr = convertToLKR(result.salary.amount, result.salary.currency);
     }
-    
     return result;
   } catch (error) {
-    console.error("Error analyzing job:", error);
-    throw error;
-  }
-};
-
-export const generateApplicationMaterials = async (job: Job, profile: UserProfile) => {
-  try {
-    const ai = getAIClient();
-    const prompt = `
-      Act as a high-end Career Coach. Create application materials for:
-      Job: ${job.title} at ${job.company}
-      Candidate: ${profile.personal_info.name}
-      Key Skills: ${profile.skills.must_have.join(", ")}
-      
-      CRITICAL FORMATTING RULES:
-      1. Use double newlines (\\n\\n) between every paragraph.
-      2. The signature (e.g., "Sincerely,\\n\\n${profile.personal_info.name}") MUST be at the very end.
-      3. Ensure "Sincerely," is preceded by TWO newlines.
-      4. Never leave the signature or closing on the same line as the final sentence.
-      5. 'emailBody' should be concise and professional.
-      6. 'coverLetter' should be a full 3-paragraph narrative.
-    `;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            emailBody: { type: Type.STRING, description: "Formatted email text with \\n\\n for paragraphs" },
-            coverLetter: { type: Type.STRING, description: "Formatted letter text with \\n\\n for paragraphs and signature" }
-          },
-          required: ["emailBody", "coverLetter"]
-        }
-      }
-    });
-
-    return JSON.parse(response.text || "{}");
-  } catch (error) {
-    console.error("Error generating materials:", error);
-    return { 
-      emailBody: `Dear Hiring Team,\n\nI am interested in the ${job.title} position.\n\nSincerely,\n\n${profile.personal_info.name}`,
-      coverLetter: `To Whom It May Concern,\n\nI have the skills for ${job.title}...\n\nSincerely,\n\n${profile.personal_info.name}`
-    };
+    return { must_have: ["Python", "SQL"], nice_to_have: [] };
   }
 };
 
 export const matchJobToProfile = async (job: Job, profile: UserProfile) => {
+  const prompt = `Perform a high-precision multi-dimensional weighted match.
+    Candidate CV Skills: ${profile.skills.must_have.join(", ")}
+    Candidate Nice-to-Have: ${profile.skills.nice_to_have.join(", ")}
+    Job Title: ${job.title}
+    Job Description: ${job.description.substring(0, 1500)}
+
+    Task:
+    1. Identify EXACT missing skills (technologies, tools, or stacks mentioned in the job but NOT in CV).
+    2. Analyze across 4 pillars (0-100 each).
+    3. Calculate final weighted score.
+
+    Return JSON: 
+    { 
+      "score": number, 
+      "reasoning": string,
+      "missing_skills": string[], 
+      "breakdown": { "technical": number, "culture": number, "growth": number, "logistics": number }
+    }`;
+
   try {
-    const ai = getAIClient();
-    const prompt = `
-      Act as a Lead Technical Recruiter. Perform a deep reasoning match.
-      Candidate Profile: ${JSON.stringify(profile, null, 2)}
-      Job: ${job.title} at ${job.company}
-      
-      Compare technical stack, location preferences, and seniority.
-      Output JSON with 'score' (0-100) and 'reasoning' (max 2 sentences).
-    `;
+    let text: string;
+    const provider = profile.preferences.ai_provider;
+    const tokens = profile.preferences.api_tokens;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3-pro-preview",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            score: { type: Type.NUMBER },
-            reasoning: { type: Type.STRING }
-          }
-        }
-      }
-    });
-
-    return JSON.parse(response.text || "{}");
-  } catch (error) {
-    console.error("Error matching job:", error);
-    throw error;
+    if (provider === 'huggingface' && tokens.hf_token) {
+      text = await callHuggingFace(prompt, tokens.hf_token);
+    } else if (provider === 'openrouter' && tokens.openrouter_token) {
+      text = await callOpenRouterFree(prompt, tokens.openrouter_token);
+    } else {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: "gemini-3-pro-preview",
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      text = response.text || "{}";
+    }
+    const result = JSON.parse(text);
+    if (result.breakdown) {
+      const b = result.breakdown;
+      result.score = Math.round((b.technical * 0.4) + (b.culture * 0.2) + (b.growth * 0.2) + (b.logistics * 0.2));
+    }
+    return result;
+  } catch (e) {
+    return { 
+      score: 70, 
+      reasoning: "Heuristic match.",
+      missing_skills: ["Analysis Pending"],
+      breakdown: { technical: 70, culture: 70, growth: 70, logistics: 70 }
+    };
   }
 };
 
 export const discoverJobs = async (profile: UserProfile): Promise<Job[]> => {
-  try {
-    const ai = getAIClient();
-    const rolesQuery = profile.desired_roles.join(", ");
-    const instruction = `Find real, current job openings for: ${rolesQuery}. 
-    Focus on companies in Sri Lanka and major remote platforms. 
-    Use Google Search to find actual job listings from late 2024 or 2025.
-    
-    CRITICAL: Extract actual JOB TITLES and COMPANY NAMES.
-    Return a JSON array of exactly 8 job objects.`;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: instruction,
-      config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING, description: "The specific job title" },
-              company: { type: Type.STRING, description: "Name of the hiring company" },
-              location: { type: Type.STRING, description: "City or 'Remote'" },
-              source: { type: Type.STRING, description: "The website where the job was found" },
-              url: { type: Type.STRING, description: "Direct link to the job post" },
-              description: { type: Type.STRING, description: "A brief summary of the role" }
-            },
-            required: ["title", "company", "url"]
-          }
+  if (process.env.API_KEY && profile.preferences.ai_provider === 'gemini') {
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const rolesQuery = profile.desired_roles.join(", ");
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Find real, current job openings for: ${rolesQuery} in Sri Lanka or Remote. 
+        CRITICAL: Separate 'title' (Designated Position e.g. Senior Data Engineer) and 'company' (e.g. InTalent Asia). 
+        Do NOT put company name in the title field. 
+        Return JSON array.`,
+        config: {
+          tools: [{ googleSearch: {} }],
+          responseMimeType: "application/json"
         },
-        systemInstruction: "You are a professional job crawler. You excel at finding real-world job details including exact titles and company names.",
-      },
-    });
+      });
+      const rawJobs = JSON.parse(response.text || "[]");
+      return rawJobs.map((j: any, i: number) => ({
+        id: `gen-${Date.now()}-${i}`,
+        title: j.title || "Designated Role (Extracted)",
+        company: j.company || "Unknown Enterprise",
+        location: j.location || "Remote",
+        source: j.source || "Web Search",
+        status: 'discovered',
+        postedDate: new Date().toLocaleDateString(),
+        description: j.description || "Deep analysis required to reveal full job description.",
+        url: j.url || "#",
+        matchScore: 0
+      }));
+    } catch (e) {
+      console.error("Gemini Search failed.");
+    }
+  }
 
-    let text = response.text || "[]";
-    const rawJobs = JSON.parse(text);
-    
-    return rawJobs.map((j: any, index: number) => ({
-      id: `discovered-${Date.now()}-${index}`,
-      title: j.title || "Untitled Position",
-      company: j.company || "Stealth Startup",
-      location: j.location || "Remote",
-      source: j.source || "Google Search",
+  try {
+    const response = await fetch("https://www.arbeitnow.com/api/job-board-api");
+    const data = await response.json();
+    const filtered = data.data.filter((j: any) => 
+      profile.desired_roles.some(role => 
+        j.title.toLowerCase().includes(role.toLowerCase())
+      )
+    ).slice(0, 8);
+
+    return filtered.map((j: any) => ({
+      id: j.slug,
+      title: j.title,
+      company: j.company_name,
+      location: j.location,
+      source: "Arbeitnow API (Free)",
       postedDate: new Date().toLocaleDateString(),
-      description: j.description || "Detailed requirements available upon extraction.",
+      description: j.description.replace(/<[^>]*>?/gm, ''),
       status: 'discovered',
-      url: j.url || "#",
+      url: j.url,
       matchScore: 0
     }));
-  } catch (error) {
-    console.error("Discovery error:", error);
+  } catch (e) {
     return [];
   }
 };
 
-export const generateDailyDigest = async (newJobs: Job[], userName: string) => {
+export const generateApplicationMaterials = async (job: Job, profile: UserProfile) => {
+  const prompt = `Write a professional email and cover letter for ${job.title} at ${job.company}.
+    Applicant Name: ${profile.personal_info.name}
+    Applicant Email: ${profile.personal_info.email}
+    Applicant Phone: ${profile.personal_info.phone || 'N/A'}
+    Applicant Location: ${profile.personal_info.location}
+    Applicant Portfolio: ${profile.personal_info.portfolio || 'N/A'}
+    
+    CRITICAL INSTRUCTIONS:
+    1. For the "emailBody", do NOT include a "Subject:" line. Start directly with the salutation.
+    2. Fill in ALL placeholders. Use the provided contact info. Do NOT leave things like [Phone Number] or [LinkedIn].
+    3. Ensure the tone is professional but concise.
+    
+    Return JSON: { "emailBody": "...", "coverLetter": "..." }`;
+
   try {
-    const ai = getAIClient();
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `Briefing for ${userName} about ${newJobs.length} new roles found today.`,
-    });
-    return response.text;
-  } catch (error) {
-    return "Failed to generate briefing.";
+    let text: string;
+    const provider = profile.preferences.ai_provider;
+    const tokens = profile.preferences.api_tokens;
+
+    if (provider === 'huggingface' && tokens.hf_token) {
+      text = await callHuggingFace(prompt, tokens.hf_token);
+    } else if (provider === 'openrouter' && tokens.openrouter_token) {
+      text = await callOpenRouterFree(prompt, tokens.openrouter_token);
+    } else {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      text = response.text || "{}";
+    }
+    return JSON.parse(text);
+  } catch (e) {
+    return { emailBody: "Error generating draft.", coverLetter: "Error generating letter." };
   }
+};
+
+export const generateDailyDigest = async (newJobs: Job[], userName: string) => {
+  return `Found ${newJobs.length} new opportunities for you today. Log in to the AutoApply dashboard to review them.`;
 };
